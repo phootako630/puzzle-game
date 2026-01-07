@@ -190,7 +190,7 @@ const DOCUMENTS: GameDocument[] = [
     content: (
       <div className="text-sm font-mono space-y-2">
         <div className="border border-blue-800 bg-blue-900/20 p-2">
-          <p className="text-blue-400 font-bold">>>> 配置参数</p>
+          <p className="text-blue-400 font-bold">&gt;&gt;&gt; 配置参数</p>
           <p>区域: 玻璃长廊 (全长50米，连接主楼与温室，无遮挡)</p>
           <p>频率: 每15分钟启动 (xx:00, xx:15, xx:30, xx:45)</p>
           <p>持续: 3分钟/次</p>
@@ -242,7 +242,7 @@ const DOCUMENTS: GameDocument[] = [
            <thead><tr className="text-gray-500"><th>Time</th><th>Action</th><th>Details</th></tr></thead>
            <tbody>
              <tr><td>14:00</td><td>发放</td><td>104 访客卡 (前台经办)</td></tr>
-             <tr><td>22:35</td><td>挂失</td><td>101 门禁卡 (电话报失) -> <span className="text-yellow-500">待同步 (SYNC PENDING)</span></td></tr>
+             <tr><td>22:35</td><td>挂失</td><td>101 门禁卡 (电话报失) -&gt; <span className="text-yellow-500">待同步 (SYNC PENDING)</span></td></tr>
              <tr><td>22:40</td><td>补办</td><td>101 临时卡 (暂存于前台)</td></tr>
              <tr><td>23:40</td><td>取用</td><td><span className="text-yellow-400 font-bold">万能卡 (Master Key #001) - 取用人: H. Foster</span></td></tr>
            </tbody>
@@ -295,9 +295,9 @@ const DOCUMENTS: GameDocument[] = [
     content: (
       <div className="text-sm font-mono">
         <p className="text-red-500 border border-red-900 p-1 mb-2 text-center text-xs">网络状态: 离线 (OFFLINE) - 启用本地缓存模式</p>
-        <p>22:00 - 101 [进入 -> 长廊]</p>
-        <p>22:05 - 101 [离开 -> 大厅]</p>
-        <p>23:00 - <span className="text-yellow-400">101 [进入 -> 长廊]</span> <span className="text-gray-500 text-xs">// 验证源: 本地缓存 (无视挂失状态)</span></p>
+        <p>22:00 - 101 [进入 -&gt; 长廊]</p>
+        <p>22:05 - 101 [离开 -&gt; 大厅]</p>
+        <p>23:00 - <span className="text-yellow-400">101 [进入 -&gt; 长廊]</span> <span className="text-gray-500 text-xs">// 验证源: 本地缓存 (无视挂失状态)</span></p>
         <p>23:45 - SYSTEM SHUTDOWN (维护停机)</p>
         <p>00:00 - SYSTEM REBOOT (系统重启)</p>
       </div>
