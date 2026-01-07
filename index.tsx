@@ -1,7 +1,7 @@
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useContext, createContext } from 'react';
 import { createRoot } from 'react-dom/client';
-import { FolderOpen, FileText, Search, Lock, AlertTriangle, CheckCircle, HelpCircle, Map, User, Clock, Unlock, XCircle, Grid, ChevronDown, ChevronRight, Terminal, Save, Play, RotateCcw } from 'lucide-react';
+import { FolderOpen, FileText, Search, Lock, AlertTriangle, CheckCircle, HelpCircle, Map, User, Clock, Unlock, XCircle, Grid, ChevronDown, ChevronRight, Terminal, Save, Play, RotateCcw, ClipboardList, Pin, Trash2, PenTool } from 'lucide-react';
 
 // --- Types & Constants ---
 
@@ -28,6 +28,23 @@ interface Ending {
   isGameOver: boolean;
 }
 
+interface CollectedEvidence {
+  id: string;
+  text: string;
+  sourceTitle: string;
+  docId: string;
+  note: string;
+  timestamp: number;
+}
+
+interface EvidenceContextType {
+  collected: CollectedEvidence[];
+  collect: (id: string, text: string, sourceTitle: string, docId: string) => void;
+  updateNote: (id: string, note: string) => void;
+  remove: (id: string) => void;
+  isCollected: (id: string) => boolean;
+}
+
 // 难度配置 (分钟)
 const DIFFICULTY_CONFIG: Record<Difficulty, number> = {
   relaxed: 120,
@@ -37,7 +54,316 @@ const DIFFICULTY_CONFIG: Record<Difficulty, number> = {
 
 const PENALTY_MS = 2 * 60 * 1000; // 错误扣时 2 分钟
 
-// 逻辑审计日志
+// --- Context ---
+
+const EvidenceContext = createContext<EvidenceContextType | null>(null);
+
+const useEvidence = () => {
+  const context = useContext(EvidenceContext);
+  if (!context) throw new Error("useEvidence must be used within EvidenceProvider");
+  return context;
+};
+
+// --- Components ---
+
+const Clue = ({ id, label, children }: { id: string, label?: string, children: React.ReactNode }) => {
+  const { isCollected, collect } = useEvidence();
+  const collected = isCollected(id);
+  
+  // Need to find the document title from context or props? 
+  // Since DOCUMENTS is static, we can't easily get the parent doc title here without passing it.
+  // For simplicity, we will assume we are inside a Document context or pass it, 
+  // but to keep it simple with the current structure, we'll let the user click and find out, 
+  // OR we can rely on the fact that this component is rendered when activeDoc is set.
+  // We'll use a hack: The parent App knows the active doc. 
+  // But wait, Clue is rendered DEEP inside. 
+  // Actually, we can just use a global "Current Active Doc" from a store if we had one.
+  // Instead, I'll require `docId` prop? No, that's tedious for the config.
+  // Let's use a "ActiveDocContext" or just update the Context to track active doc.
+  
+  // Simplification: We will grab the Active Doc ID from a separate context or just pass it down if we refactor.
+  // BETTER APPROACH: The Clue component will just fire an event, and the App (which holds the active doc state) will handle the specific data.
+  // But `collect` needs the source title immediately. 
+  // Let's make `Clue` take `docTitle`? No, repetitive.
+  // Let's wrap Document Content in a Context Provider for the current document.
+  
+  const docContext = useContext(CurrentDocContext);
+
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!collected && docContext) {
+      // Get text content from children if it's a string, otherwise use label
+      const textContent = label || (typeof children === 'string' ? children : '未命名线索');
+      collect(id, textContent, docContext.title, docContext.id);
+    }
+  };
+
+  return (
+    <span
+      onClick={handleClick}
+      className={`evidence-highlight ${collected ? 'collected' : ''} px-0.5 rounded mx-0.5`}
+      title={collected ? "已收集到证据板" : "点击收集线索"}
+    >
+      {children}
+    </span>
+  );
+};
+
+// Helper context to let Clue know where it lives
+const CurrentDocContext = createContext<{id: string, title: string} | null>(null);
+
+// --- Static Data (Refactored with Clues) ---
+
+const DOCUMENTS: GameDocument[] = [
+  // --- FOLDER: ADMIN ---
+  {
+    id: 'guest_list',
+    folderId: 'admin',
+    title: '11月13日 入住登记表',
+    type: 'list',
+    content: (
+      <div className="space-y-2 text-sm font-mono">
+        <div className="border-b border-gray-600 pb-2 mb-2 font-bold flex justify-between">
+            <span>听松疗养院 - 前台登记</span>
+            <span>日期: 1998/11/13</span>
+        </div>
+        <p>101: Edgar Vaughn <span className="text-red-400 font-handwriting">[<Clue id="c_101_sugar" label="101患有糖尿病">VIP, 糖尿病, 勿扰</Clue>]</span></p>
+        <p>102: Susanna Clay <span className="text-gray-500 italic">[长期住户, 歌剧演员]</span></p>
+        <p>103: <span className="bg-black text-black px-1 select-none">RESERVED</span> (空置维护中)</p>
+        <p>104: John Smith <span className="text-red-400 font-handwriting">[迟到备注: <Clue id="c_104_storm" label="Smith因暴雨迟到">暴雨延误, 预计23:30到达</Clue>]</span></p>
+        <div className="mt-4 p-2 border border-gray-600 bg-gray-800/50">
+          <p className="font-bold">值班经理备注 (23:35):</p>
+          <p><Clue id="c_smith_arrival" label="真正的Smith 23:35才到达">真正的 Smith 先生已到达</Clue>。因 104 房需清理（前一位客人刚退？），安排其在员工休息室暂住一晚，明早办理入住。</p>
+        </div>
+      </div>
+    )
+  },
+  {
+    id: 'phone_log',
+    folderId: 'admin',
+    title: '总台电话转接记录',
+    type: 'log',
+    content: (
+      <div className="text-sm font-mono">
+        <table className="w-full text-left">
+          <thead><tr className="border-b border-gray-600"><th>时间</th><th>来源</th><th>去向</th><th>备注</th></tr></thead>
+          <tbody>
+            <tr><td>22:15</td><td>104</td><td>前台</td><td>要求送一瓶威士忌</td></tr>
+            <tr><td>22:30</td><td>101</td><td>前台</td><td><span className="text-yellow-400">报失：<Clue id="c_101_lost_card" label="101在22:30报失门禁卡">门禁卡遗失</Clue></span></td></tr>
+            <tr><td>22:35</td><td>前台</td><td>102</td><td>无人接听</td></tr>
+            <tr><td>23:10</td><td>外部</td><td>前台</td><td>线路故障，噪音极大...</td></tr>
+          </tbody>
+        </table>
+        <p className="mt-2 text-xs text-gray-500">*注：暴雨导致线路不稳定，内线系统偶发串线。</p>
+      </div>
+    )
+  },
+
+  // --- FOLDER: SERVICE ---
+  {
+    id: 'dietary',
+    folderId: 'service',
+    title: '膳食禁忌单 (厨房)',
+    type: 'list',
+    content: (
+      <div className="text-sm space-y-2">
+        <p>101 (Edgar): <span className="text-red-400 font-bold"><Clue id="c_diet_sugar" label="101严禁糖分">I型糖尿病 (严禁糖分)</Clue></span></p>
+        <p>102 (Susanna): <span className="text-yellow-500 font-bold"><Clue id="c_diet_dairy" label="102严禁奶制品">重度乳糖不耐 (严禁奶制品)</Clue></span></p>
+        <p>104 (Smith): 无禁忌记录</p>
+        <div className="mt-2 border-t border-gray-600 pt-2">
+          <p className="font-bold">今日特供甜点：</p>
+          <p><Clue id="c_puff_ingredients" label="泡芙含鲜奶油与糖霜">特浓奶油泡芙 (含大量鲜奶油与糖霜)</Clue></p>
+          <p className="text-xs text-gray-400">警告：101/102 必须替换为无糖果盘，严禁混淆！后果自负。</p>
+        </div>
+      </div>
+    )
+  },
+  {
+    id: 'room_service_log',
+    folderId: 'service',
+    title: '客房服务回收记录',
+    type: 'log',
+    content: (
+      <div className="text-sm font-mono">
+        <p>[20:15 餐盘回收]</p>
+        <p>101: 主菜空, 果盘未动。</p>
+        <p>102: 主菜剩半, 果盘空。</p>
+        <p>104: 主菜空, <span className="bg-yellow-900/50 text-yellow-200 px-1 border border-yellow-700"><Clue id="c_104_ate_puff" label="104房间吃光了泡芙">奶油泡芙盘空</Clue></span>。</p>
+      </div>
+    )
+  },
+  {
+    id: 'laundry',
+    folderId: 'service',
+    title: '洗衣房收衣单',
+    type: 'receipt',
+    content: (
+      <div className="text-sm font-mono bg-white text-black p-3 shadow-sm rotate-1 max-w-sm">
+        <p className="text-center font-bold border-b border-black mb-2">洗衣回单 (LAUNDRY RECEIPT)</p>
+        <p>101: 浴袍 (XL) x1</p>
+        <p>102: 丝绸睡衣 (S) x1 [干洗]</p>
+        <p>104: <Clue id="c_104_robe" label="104送洗了L码浴袍">浴袍 (L) x1</Clue></p>
+        <p className="mt-4 text-xs text-right">经办人: Arthur (维修部兼)</p>
+      </div>
+    )
+  },
+  {
+    id: 'complaint_note',
+    folderId: 'service',
+    title: '住户投诉单 (102)',
+    type: 'note',
+    content: (
+      <div className="text-sm font-serif bg-yellow-50 text-black p-4">
+        <p className="font-bold">来自: 102 (Susanna Clay)</p>
+        <p>内容：外面玻璃长廊的喷水声简直像轰炸机一样！我根本无法休息。这该死的系统到底什么时候会停？</p>
+        <hr className="border-gray-400 my-2"/>
+        <p className="font-bold">前台回复：</p>
+        <p>尊敬的 Clay 女士，非常抱歉。为了维持珍稀热带植物的湿度，<Clue id="c_sprinkler_always" label="喷淋系统24小时运行">自动喷淋系统必须 24 小时不间断运行</Clue>。我们无法为您单独关闭。</p>
+      </div>
+    )
+  },
+
+  // --- FOLDER: SYSTEM ---
+  {
+    id: 'sprinkler',
+    folderId: 'system',
+    title: '玻璃长廊喷淋系统说明',
+    type: 'report',
+    content: (
+      <div className="text-sm font-mono space-y-2">
+        <div className="border border-blue-800 bg-blue-900/20 p-2">
+          <p className="text-blue-400 font-bold">&gt;&gt;&gt; 配置参数</p>
+          <p>区域: 玻璃长廊 (全长50米，连接主楼与温室，无遮挡)</p>
+          <p>频率: 每15分钟启动 (xx:00, xx:15, xx:30, xx:45)</p>
+          <p>持续: 3分钟/次</p>
+        </div>
+        <div className="border border-red-800 bg-red-900/20 p-2">
+           <p className="text-red-400 font-bold">!!! 警告 !!!</p>
+           <p>地面铺设为吸水防滑岩。喷淋结束后，<Clue id="c_wet_floor" label="喷淋后地面积水10分钟">地面将在至少 10 分钟内保持严重积水状态</Clue>。</p>
+           <p>严禁穿着纸质/棉质拖鞋进入，否则会瞬间湿透并损毁。</p>
+        </div>
+      </div>
+    )
+  },
+  {
+    id: 'maintenance_auth',
+    folderId: 'system',
+    title: '系统停机维护授权书',
+    type: 'report',
+    content: (
+      <div className="text-sm font-serif bg-[#f0f0f0] text-black p-4">
+        <div className="text-right text-xs font-bold text-red-600 border-2 border-red-600 inline-block p-1 rotate-12 mb-2">机密 / 仅限管理层<br/>CONFIDENTIAL</div>
+        <h3 className="text-center font-bold text-lg underline mb-4">系统干预授权书</h3>
+        <p>兹批准于 <span className="font-bold"><Clue id="c_maint_time" label="23:45-00:00系统停机">23:45 - 00:00</Clue></span> 对全院安防及喷淋系统进行短时停机维护，以校准传感器。</p>
+        <p className="mt-4">停机期间：</p>
+        <ul className="list-disc pl-5">
+            <li>CCTV 将离线</li>
+            <li>电子门禁转为<span className="font-bold"><Clue id="c_offline_mode" label="门禁转为离线缓存模式">本地缓存模式</Clue></span>（无法同步实时挂失）</li>
+            <li><span className="font-bold"><Clue id="c_sprinkler_off" label="停机期间喷淋强制关闭(干燥)">喷淋系统强制关闭 (干燥窗口)</Clue></span></li>
+        </ul>
+        <div className="mt-8 flex justify-between items-end">
+            <div>
+                <p>批准人签名：</p>
+                <p className="font-handwriting text-xl text-blue-900"><Clue id="c_helen_sign" label="Helen签署了停机令">Dr. Helen Foster</Clue></p>
+            </div>
+            <p className="text-xs">日期: 11/13</p>
+        </div>
+      </div>
+    )
+  },
+  {
+    id: 'key_log',
+    folderId: 'system',
+    title: '🔑 钥匙卡管理台账',
+    type: 'log',
+    locked: true,
+    content: (
+      <div className="text-sm font-mono space-y-2">
+        <p className="text-green-400 border-b border-green-800 pb-1">访问已授权：安全等级 2</p>
+        <table className="w-full text-left">
+           <thead><tr className="text-gray-500"><th>Time</th><th>Action</th><th>Details</th></tr></thead>
+           <tbody>
+             <tr><td>14:00</td><td>发放</td><td>104 访客卡 (前台经办)</td></tr>
+             <tr><td>22:35</td><td>挂失</td><td>101 门禁卡 (电话报失) -&gt; <span className="text-yellow-500"><Clue id="c_sync_pending" label="101卡挂失状态待同步">待同步 (SYNC PENDING)</Clue></span></td></tr>
+             <tr><td>22:40</td><td>补办</td><td>101 临时卡 (暂存于前台)</td></tr>
+             <tr><td>23:40</td><td>取用</td><td><span className="text-yellow-400 font-bold"><Clue id="c_master_key" label="Helen取走了万能卡">万能卡 (Master Key #001) - 取用人: H. Foster</Clue></span></td></tr>
+           </tbody>
+        </table>
+        <p className="text-xs text-red-500 mt-2">系统警告: 暴雨导致主服务器连接超时。挂失指令暂未同步至终端闸机。</p>
+      </div>
+    )
+  },
+  {
+    id: 'maintenance_notes',
+    folderId: 'system',
+    title: 'Arthur的维修手记',
+    type: 'note',
+    content: (
+      <div className="text-sm font-handwriting leading-relaxed text-gray-300">
+        <p>22:45 - 给104送威士忌。敲门没人。放在门口了。</p>
+        <p>23:20 - 厨房水管报修，我去处理。</p>
+        <p>23:50 - 趁着“停机维护”去长廊换灯泡。这时候喷淋停了，<span className="bg-white text-black px-1 font-bold"><Clue id="c_arthur_dry" label="23:50地面是干的">地是干的</Clue></span>，不用穿笨重的雨靴。真好。</p>
+        <p>01:30 - 巡逻发现温室门没关... 里面有人躺着。</p>
+      </div>
+    )
+  },
+
+  // --- FOLDER: EVIDENCE ---
+  {
+    id: 'autopsy',
+    folderId: 'evidence',
+    title: '尸检报告 #98-044',
+    type: 'report',
+    content: (
+      <div className="text-sm space-y-2">
+        <div className="bg-neutral-800 p-3 border-l-4 border-red-600">
+          <p className="font-bold text-red-400">关键物理证据：</p>
+          <p>死者穿着疗养院配发的 <span className="font-bold text-white"><Clue id="c_paper_slippers" label="死者穿一次性纸浆拖鞋">"环保纸浆拖鞋" (一次性)</Clue></span>。</p>
+          <p className="text-gray-400 text-xs mt-1">注：该材质极其脆弱，<Clue id="c_slipper_water" label="纸浆拖鞋遇水即烂">遇水即发生不可逆的软化与崩解</Clue>。死者鞋底完好、干燥、无任何水渍。</p>
+          <p className="mt-2 text-green-400 font-mono">结论：死者从未踏入过潮湿地面。该特性无法通过擦干鞋底伪造。</p>
+        </div>
+        <div className="mt-4">
+           <p>胃内容物：威士忌、<Clue id="c_stomach_puff" label="胃内有未消化奶油泡芙">未消化的奶油泡芙</Clue>。</p>
+           <p>死亡时间：23:30 - 00:30 之间。</p>
+        </div>
+      </div>
+    )
+  },
+  {
+    id: 'access_log',
+    folderId: 'evidence',
+    title: '门禁刷卡流水 (部分)',
+    type: 'log',
+    content: (
+      <div className="text-sm font-mono">
+        <p className="text-red-500 border border-red-900 p-1 mb-2 text-center text-xs">网络状态: 离线 (OFFLINE) - 启用本地缓存模式</p>
+        <p>22:00 - 101 [进入 -&gt; 长廊]</p>
+        <p>22:05 - 101 [离开 -&gt; 大厅]</p>
+        <p>23:00 - <span className="text-yellow-400"><Clue id="c_101_entry_2300" label="101卡在23:00通过门禁">101 [进入 -&gt; 长廊]</Clue></span> <span className="text-gray-500 text-xs">// 验证源: 本地缓存 (无视挂失状态)</span></p>
+        <p>23:45 - SYSTEM SHUTDOWN (维护停机)</p>
+        <p>00:00 - SYSTEM REBOOT (系统重启)</p>
+      </div>
+    )
+  },
+  {
+    id: 'trash_note',
+    folderId: 'evidence',
+    title: '104 垃圾桶碎纸片',
+    type: 'note',
+    content: (
+      <div className="text-sm font-mono bg-white text-black p-4 rotate-1 shadow-lg max-w-[300px]">
+        <p>致 L.S. (Link Sterling):</p>
+        <p>计划有变。如果你想要那笔封口费，必须避开监控。</p>
+        <p>唯一的盲区在温室。</p>
+        <p>记住我们的暗号：</p>
+        <p className="font-bold text-lg mt-2 border-2 border-black p-1 inline-block">ROOM 101 + ROOM 103 = ?</p>
+        <p className="text-xs mt-4 text-right">(这是我在系统里的后门代码)</p>
+      </div>
+    )
+  }
+];
+
+// --- Logic Data (Audits) ---
 const AUDIT_LOG = [
   {
     conclusion: "排除 101 (Edgar) 和 102 (Susanna) 为死者",
@@ -71,256 +397,6 @@ const AUDIT_LOG = [
   }
 ];
 
-// 文档数据
-const DOCUMENTS: GameDocument[] = [
-  // --- FOLDER: ADMIN ---
-  {
-    id: 'guest_list',
-    folderId: 'admin',
-    title: '11月13日 入住登记表',
-    type: 'list',
-    content: (
-      <div className="space-y-2 text-sm font-mono">
-        <div className="border-b border-gray-600 pb-2 mb-2 font-bold flex justify-between">
-            <span>听松疗养院 - 前台登记</span>
-            <span>日期: 1998/11/13</span>
-        </div>
-        <p>101: Edgar Vaughn <span className="text-red-400 font-handwriting">[VIP, 糖尿病, 勿扰]</span></p>
-        <p>102: Susanna Clay <span className="text-gray-500 italic">[长期住户, 歌剧演员]</span></p>
-        <p>103: <span className="bg-black text-black px-1 select-none">RESERVED</span> (空置维护中)</p>
-        <p>104: John Smith <span className="text-red-400 font-handwriting">[迟到备注: 暴雨延误, 预计23:30到达]</span></p>
-        <div className="mt-4 p-2 border border-gray-600 bg-gray-800/50">
-          <p className="font-bold">值班经理备注 (23:35):</p>
-          <p>真正的 Smith 先生已到达。因 104 房需清理（前一位客人刚退？），安排其在员工休息室暂住一晚，明早办理入住。</p>
-        </div>
-      </div>
-    )
-  },
-  {
-    id: 'phone_log',
-    folderId: 'admin',
-    title: '总台电话转接记录',
-    type: 'log',
-    content: (
-      <div className="text-sm font-mono">
-        <table className="w-full text-left">
-          <thead><tr className="border-b border-gray-600"><th>时间</th><th>来源</th><th>去向</th><th>备注</th></tr></thead>
-          <tbody>
-            <tr><td>22:15</td><td>104</td><td>前台</td><td>要求送一瓶威士忌</td></tr>
-            <tr><td>22:30</td><td>101</td><td>前台</td><td><span className="text-yellow-400">报失：门禁卡遗失</span></td></tr>
-            <tr><td>22:35</td><td>前台</td><td>102</td><td>无人接听</td></tr>
-            <tr><td>23:10</td><td>外部</td><td>前台</td><td>线路故障，噪音极大...</td></tr>
-          </tbody>
-        </table>
-        <p className="mt-2 text-xs text-gray-500">*注：暴雨导致线路不稳定，内线系统偶发串线。</p>
-      </div>
-    )
-  },
-
-  // --- FOLDER: SERVICE ---
-  {
-    id: 'dietary',
-    folderId: 'service',
-    title: '膳食禁忌单 (厨房)',
-    type: 'list',
-    content: (
-      <div className="text-sm space-y-2">
-        <p>101 (Edgar): <span className="text-red-400 font-bold">I型糖尿病 (严禁糖分)</span></p>
-        <p>102 (Susanna): <span className="text-yellow-500 font-bold">重度乳糖不耐 (严禁奶制品)</span></p>
-        <p>104 (Smith): 无禁忌记录</p>
-        <div className="mt-2 border-t border-gray-600 pt-2">
-          <p className="font-bold">今日特供甜点：</p>
-          <p>特浓奶油泡芙 (含大量鲜奶油与糖霜)</p>
-          <p className="text-xs text-gray-400">警告：101/102 必须替换为无糖果盘，严禁混淆！后果自负。</p>
-        </div>
-      </div>
-    )
-  },
-  {
-    id: 'room_service_log',
-    folderId: 'service',
-    title: '客房服务回收记录',
-    type: 'log',
-    content: (
-      <div className="text-sm font-mono">
-        <p>[20:15 餐盘回收]</p>
-        <p>101: 主菜空, 果盘未动。</p>
-        <p>102: 主菜剩半, 果盘空。</p>
-        <p>104: 主菜空, <span className="bg-yellow-900/50 text-yellow-200 px-1 border border-yellow-700">奶油泡芙盘空</span>。</p>
-      </div>
-    )
-  },
-  {
-    id: 'laundry',
-    folderId: 'service',
-    title: '洗衣房收衣单',
-    type: 'receipt',
-    content: (
-      <div className="text-sm font-mono bg-white text-black p-3 shadow-sm rotate-1 max-w-sm">
-        <p className="text-center font-bold border-b border-black mb-2">洗衣回单 (LAUNDRY RECEIPT)</p>
-        <p>101: 浴袍 (XL) x1</p>
-        <p>102: 丝绸睡衣 (S) x1 [干洗]</p>
-        <p>104: 浴袍 (L) x1</p>
-        <p className="mt-4 text-xs text-right">经办人: Arthur (维修部兼)</p>
-      </div>
-    )
-  },
-  {
-    id: 'complaint_note',
-    folderId: 'service',
-    title: '住户投诉单 (102)',
-    type: 'note',
-    content: (
-      <div className="text-sm font-serif bg-yellow-50 text-black p-4">
-        <p className="font-bold">来自: 102 (Susanna Clay)</p>
-        <p>内容：外面玻璃长廊的喷水声简直像轰炸机一样！我根本无法休息。这该死的系统到底什么时候会停？</p>
-        <hr className="border-gray-400 my-2"/>
-        <p className="font-bold">前台回复：</p>
-        <p>尊敬的 Clay 女士，非常抱歉。为了维持珍稀热带植物的湿度，<span className="underline">自动喷淋系统必须 24 小时不间断运行</span>。我们无法为您单独关闭。</p>
-      </div>
-    )
-  },
-
-  // --- FOLDER: SYSTEM ---
-  {
-    id: 'sprinkler',
-    folderId: 'system',
-    title: '玻璃长廊喷淋系统说明',
-    type: 'report',
-    content: (
-      <div className="text-sm font-mono space-y-2">
-        <div className="border border-blue-800 bg-blue-900/20 p-2">
-          <p className="text-blue-400 font-bold">&gt;&gt;&gt; 配置参数</p>
-          <p>区域: 玻璃长廊 (全长50米，连接主楼与温室，无遮挡)</p>
-          <p>频率: 每15分钟启动 (xx:00, xx:15, xx:30, xx:45)</p>
-          <p>持续: 3分钟/次</p>
-        </div>
-        <div className="border border-red-800 bg-red-900/20 p-2">
-           <p className="text-red-400 font-bold">!!! 警告 !!!</p>
-           <p>地面铺设为吸水防滑岩。喷淋结束后，地面将在 <span className="underline">至少 10 分钟内</span> 保持严重积水状态。</p>
-           <p>严禁穿着纸质/棉质拖鞋进入，否则会瞬间湿透并损毁。</p>
-        </div>
-      </div>
-    )
-  },
-  {
-    id: 'maintenance_auth',
-    folderId: 'system',
-    title: '系统停机维护授权书',
-    type: 'report',
-    content: (
-      <div className="text-sm font-serif bg-[#f0f0f0] text-black p-4">
-        <div className="text-right text-xs font-bold text-red-600 border-2 border-red-600 inline-block p-1 rotate-12 mb-2">机密 / 仅限管理层<br/>CONFIDENTIAL</div>
-        <h3 className="text-center font-bold text-lg underline mb-4">系统干预授权书</h3>
-        <p>兹批准于 <span className="font-bold">23:45 - 00:00</span> 对全院安防及喷淋系统进行短时停机维护，以校准传感器。</p>
-        <p className="mt-4">停机期间：</p>
-        <ul className="list-disc pl-5">
-            <li>CCTV 将离线</li>
-            <li>电子门禁转为<span className="font-bold">本地缓存模式</span>（无法同步实时挂失）</li>
-            <li><span className="font-bold">喷淋系统强制关闭 (干燥窗口)</span></li>
-        </ul>
-        <div className="mt-8 flex justify-between items-end">
-            <div>
-                <p>批准人签名：</p>
-                <p className="font-handwriting text-xl text-blue-900">Dr. Helen Foster</p>
-            </div>
-            <p className="text-xs">日期: 11/13</p>
-        </div>
-      </div>
-    )
-  },
-  {
-    id: 'key_log',
-    folderId: 'system',
-    title: '🔑 钥匙卡管理台账',
-    type: 'log',
-    locked: true,
-    content: (
-      <div className="text-sm font-mono space-y-2">
-        <p className="text-green-400 border-b border-green-800 pb-1">访问已授权：安全等级 2</p>
-        <table className="w-full text-left">
-           <thead><tr className="text-gray-500"><th>Time</th><th>Action</th><th>Details</th></tr></thead>
-           <tbody>
-             <tr><td>14:00</td><td>发放</td><td>104 访客卡 (前台经办)</td></tr>
-             <tr><td>22:35</td><td>挂失</td><td>101 门禁卡 (电话报失) -&gt; <span className="text-yellow-500">待同步 (SYNC PENDING)</span></td></tr>
-             <tr><td>22:40</td><td>补办</td><td>101 临时卡 (暂存于前台)</td></tr>
-             <tr><td>23:40</td><td>取用</td><td><span className="text-yellow-400 font-bold">万能卡 (Master Key #001) - 取用人: H. Foster</span></td></tr>
-           </tbody>
-        </table>
-        <p className="text-xs text-red-500 mt-2">系统警告: 暴雨导致主服务器连接超时。挂失指令暂未同步至终端闸机。</p>
-      </div>
-    )
-  },
-  {
-    id: 'maintenance_notes',
-    folderId: 'system',
-    title: 'Arthur的维修手记',
-    type: 'note',
-    content: (
-      <div className="text-sm font-handwriting leading-relaxed text-gray-300">
-        <p>22:45 - 给104送威士忌。敲门没人。放在门口了。</p>
-        <p>23:20 - 厨房水管报修，我去处理。</p>
-        <p>23:50 - 趁着“停机维护”去长廊换灯泡。这时候喷淋停了，<span className="bg-white text-black px-1 font-bold">地是干的</span>，不用穿笨重的雨靴。真好。</p>
-        <p>01:30 - 巡逻发现温室门没关... 里面有人躺着。</p>
-      </div>
-    )
-  },
-
-  // --- FOLDER: EVIDENCE ---
-  {
-    id: 'autopsy',
-    folderId: 'evidence',
-    title: '尸检报告 #98-044',
-    type: 'report',
-    content: (
-      <div className="text-sm space-y-2">
-        <div className="bg-neutral-800 p-3 border-l-4 border-red-600">
-          <p className="font-bold text-red-400">关键物理证据：</p>
-          <p>死者穿着疗养院配发的 <span className="font-bold text-white">"环保纸浆拖鞋" (一次性)</span>。</p>
-          <p className="text-gray-400 text-xs mt-1">注：该材质极其脆弱，遇水即发生不可逆的软化与崩解。死者鞋底完好、干燥、无任何水渍。</p>
-          <p className="mt-2 text-green-400 font-mono">结论：死者从未踏入过潮湿地面。该特性无法通过擦干鞋底伪造。</p>
-        </div>
-        <div className="mt-4">
-           <p>胃内容物：威士忌、未消化的奶油泡芙。</p>
-           <p>死亡时间：23:30 - 00:30 之间。</p>
-        </div>
-      </div>
-    )
-  },
-  {
-    id: 'access_log',
-    folderId: 'evidence',
-    title: '门禁刷卡流水 (部分)',
-    type: 'log',
-    content: (
-      <div className="text-sm font-mono">
-        <p className="text-red-500 border border-red-900 p-1 mb-2 text-center text-xs">网络状态: 离线 (OFFLINE) - 启用本地缓存模式</p>
-        <p>22:00 - 101 [进入 -&gt; 长廊]</p>
-        <p>22:05 - 101 [离开 -&gt; 大厅]</p>
-        <p>23:00 - <span className="text-yellow-400">101 [进入 -&gt; 长廊]</span> <span className="text-gray-500 text-xs">// 验证源: 本地缓存 (无视挂失状态)</span></p>
-        <p>23:45 - SYSTEM SHUTDOWN (维护停机)</p>
-        <p>00:00 - SYSTEM REBOOT (系统重启)</p>
-      </div>
-    )
-  },
-  {
-    id: 'trash_note',
-    folderId: 'evidence',
-    title: '104 垃圾桶碎纸片',
-    type: 'note',
-    content: (
-      <div className="text-sm font-mono bg-white text-black p-4 rotate-1 shadow-lg max-w-[300px]">
-        <p>致 L.S. (Link Sterling):</p>
-        <p>计划有变。如果你想要那笔封口费，必须避开监控。</p>
-        <p>唯一的盲区在温室。</p>
-        <p>记住我们的暗号：</p>
-        <p className="font-bold text-lg mt-2 border-2 border-black p-1 inline-block">ROOM 101 + ROOM 103 = ?</p>
-        <p className="text-xs mt-4 text-right">(这是我在系统里的后门代码)</p>
-      </div>
-    )
-  }
-];
-
 // --- Subcomponents ---
 
 const Toast = ({ message, onClose }: { message: string, onClose: () => void }) => (
@@ -349,6 +425,69 @@ const Modal = ({ title, children, actions, color = "text-neutral-200" }: any) =>
     </div>
   </div>
 );
+
+const EvidenceBoard = ({ onClose }: { onClose: () => void }) => {
+  const { collected, updateNote, remove } = useEvidence();
+
+  return (
+    <div className="fixed inset-0 bg-black/95 z-[55] flex flex-col animate-in fade-in duration-200">
+      <div className="flex items-center justify-between p-4 border-b border-neutral-800 bg-neutral-900">
+        <h2 className="text-xl font-bold font-serif text-amber-500 flex items-center gap-2">
+          <ClipboardList /> 证据板 (Evidence Board)
+        </h2>
+        <button onClick={onClose} className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs">
+          返回档案室
+        </button>
+      </div>
+      
+      <div className="flex-1 overflow-y-auto p-4 md:p-8">
+        {collected.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-neutral-600 space-y-4">
+            <Pin size={48} className="opacity-20" />
+            <p>暂无收集的线索。</p>
+            <p className="text-xs">在阅读档案时，点击带有 <span className="border-b-2 border-dashed border-amber-600">虚线标注</span> 的关键信息进行收集。</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {collected.map(item => (
+              <div key={item.id} className="bg-[#1a1a1a] border border-neutral-700 p-4 rounded shadow-lg flex flex-col h-64 relative group">
+                <div className="flex justify-between items-start mb-2">
+                  <div className="text-[10px] text-amber-600 uppercase font-bold tracking-wider flex items-center gap-1">
+                    <FileText size={10} /> {item.sourceTitle}
+                  </div>
+                  <button 
+                    onClick={() => remove(item.id)}
+                    className="text-neutral-700 hover:text-red-500 transition-colors"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto mb-4 border-l-2 border-amber-800 pl-3">
+                  <p className="text-sm font-serif text-neutral-300 leading-relaxed italic">
+                    "{item.text}"
+                  </p>
+                </div>
+                
+                <div className="mt-auto">
+                  <label className="text-[10px] text-neutral-500 block mb-1 flex items-center gap-1">
+                    <PenTool size={10} /> 你的推论:
+                  </label>
+                  <textarea 
+                    value={item.note}
+                    onChange={(e) => updateNote(item.id, e.target.value)}
+                    placeholder="这条线索意味着..."
+                    className="w-full bg-black/50 border border-neutral-800 rounded p-2 text-xs text-green-500 font-mono resize-none focus:border-green-800 outline-none h-16"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const FolderBtn = ({ id, label, icon, active, onClick }: any) => (
   <button
@@ -399,6 +538,10 @@ const App = () => {
   const [cipherInput, setCipherInput] = useState("");
   const [grid, setGrid] = useState<Record<string, boolean>>({});
 
+  // Evidence State
+  const [collectedEvidence, setCollectedEvidence] = useState<CollectedEvidence[]>([]);
+  const [showEvidenceBoard, setShowEvidenceBoard] = useState(false);
+
   // Form State
   const [archive, setArchive] = useState({
     victim_identity: '',
@@ -424,10 +567,10 @@ const App = () => {
     const saveData = {
       gameState, difficulty, deadline, archive, grid, 
       unlockedDocs: Array.from(unlockedDocs), 
-      activeDocId, activeFolder
+      activeDocId, activeFolder, collectedEvidence
     };
     localStorage.setItem('pine_save', JSON.stringify(saveData));
-  }, [gameState, difficulty, deadline, archive, grid, unlockedDocs, activeDocId, activeFolder]);
+  }, [gameState, difficulty, deadline, archive, grid, unlockedDocs, activeDocId, activeFolder, collectedEvidence]);
 
   const loadGame = () => {
     try {
@@ -443,6 +586,7 @@ const App = () => {
       setUnlockedDocs(new Set(data.unlockedDocs));
       setActiveFolder(data.activeFolder || 'admin');
       setActiveDocId(data.activeDocId);
+      setCollectedEvidence(data.collectedEvidence || []);
       setGameState('playing');
       return true;
     } catch (e) {
@@ -457,6 +601,7 @@ const App = () => {
     setArchive({ victim_identity: '', victim_room: '', killer: '', murder_time: '', method_clue: '' });
     setGrid({});
     setUnlockedDocs(new Set());
+    setCollectedEvidence([]);
     setActiveFolder('admin');
     setActiveDocId(null);
     setGameState('playing');
@@ -604,6 +749,25 @@ const App = () => {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  // --- Context Providers Helpers ---
+  const evidenceCtxValue = useMemo(() => ({
+    collected: collectedEvidence,
+    collect: (id: string, text: string, sourceTitle: string, docId: string) => {
+        if (!collectedEvidence.find(c => c.id === id)) {
+            setCollectedEvidence(prev => [...prev, { id, text, sourceTitle, docId, note: '', timestamp: Date.now() }]);
+            setToastMsg("线索已收集到证据板");
+            setTimeout(() => setToastMsg(null), 2000);
+        }
+    },
+    updateNote: (id: string, note: string) => {
+        setCollectedEvidence(prev => prev.map(c => c.id === id ? { ...c, note } : c));
+    },
+    remove: (id: string) => {
+        setCollectedEvidence(prev => prev.filter(c => c.id !== id));
+    },
+    isCollected: (id: string) => !!collectedEvidence.find(c => c.id === id)
+  }), [collectedEvidence]);
+
   // --- Render: Init Screen ---
   if (gameState === 'init') {
     const hasSave = !!localStorage.getItem('pine_save');
@@ -639,6 +803,7 @@ const App = () => {
   const remainingTime = deadline - now;
   
   return (
+    <EvidenceContext.Provider value={evidenceCtxValue}>
     <div className="h-screen flex flex-col md:flex-row overflow-hidden font-mono text-sm bg-neutral-900 text-neutral-300">
       
       {/* Toast Notification */}
@@ -659,6 +824,9 @@ const App = () => {
         </Modal>
       )}
 
+      {/* Evidence Board Overlay */}
+      {showEvidenceBoard && <EvidenceBoard onClose={() => setShowEvidenceBoard(false)} />}
+
       {/* Sidebar */}
       <div className="w-full md:w-64 bg-[#0a0a0a] border-r border-neutral-800 flex flex-col flex-shrink-0 z-20">
         <div className="p-4 border-b border-neutral-800 bg-black">
@@ -676,6 +844,15 @@ const App = () => {
           <FolderBtn id="service" label="医疗与服务" icon={<Clock size={14}/>} active={activeFolder} onClick={setActiveFolder} />
           <FolderBtn id="system" label="设施与系统" icon={<Lock size={14}/>} active={activeFolder} onClick={setActiveFolder} />
           <FolderBtn id="evidence" label="证据与尸检" icon={<AlertTriangle size={14}/>} active={activeFolder} onClick={setActiveFolder} />
+        </div>
+
+        <div className="p-2 border-t border-neutral-800">
+          <button 
+             onClick={() => setShowEvidenceBoard(true)}
+             className="w-full py-3 px-2 bg-neutral-800 hover:bg-neutral-700 text-amber-500 border border-neutral-700 flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-wider"
+          >
+             <ClipboardList size={16} /> 证据板 ({collectedEvidence.length})
+          </button>
         </div>
 
         <div className="p-4 border-t border-neutral-800 bg-neutral-900/50">
@@ -719,6 +896,7 @@ const App = () => {
 
         <div className="flex-1 p-4 md:p-8 overflow-y-auto bg-[#1a1a1a] relative">
           {activeDoc ? (
+            <CurrentDocContext.Provider value={activeDoc}>
             <div className="max-w-3xl mx-auto bg-[#e5e5e5] text-neutral-900 min-h-[600px] shadow-2xl paper-shadow relative animate-in fade-in duration-300 texture-overlay">
                <div className="absolute inset-0 bg-yellow-900/5 pointer-events-none mix-blend-multiply" />
                <div className="absolute top-2 right-2 border-2 border-red-900/30 text-red-900/30 font-bold text-xs px-2 rotate-12 select-none">绝密档案 / CONFIDENTIAL</div>
@@ -734,7 +912,7 @@ const App = () => {
                    </div>
                  </div>
 
-                 <div className="font-serif leading-relaxed text-sm md:text-base">
+                 <div className="font-serif leading-relaxed text-sm md:text-base selection:bg-amber-200 selection:text-black">
                    {activeDoc.content}
                  </div>
                </div>
@@ -743,6 +921,7 @@ const App = () => {
                  仅限内部流转 • 禁止外泄
                </div>
             </div>
+            </CurrentDocContext.Provider>
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-neutral-700 gap-4">
               <Search size={64} className="opacity-20" />
@@ -919,6 +1098,7 @@ const App = () => {
       )}
 
     </div>
+    </EvidenceContext.Provider>
   );
 };
 
