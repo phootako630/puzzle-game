@@ -1,505 +1,767 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
-import { FolderOpen, FileText, Search, Lock, AlertTriangle, CheckCircle, HelpCircle, Map, User, Clock, Check } from 'lucide-react';
+import { FolderOpen, FileText, Search, Lock, AlertTriangle, CheckCircle, HelpCircle, Map, User, Clock, Unlock, XCircle, Grid, ChevronDown, ChevronRight, Terminal, RefreshCw } from 'lucide-react';
 
-// --- Types & Data Structures ---
+// --- Types & Constants ---
 
-type DocType = 'log' | 'list' | 'note' | 'report' | 'transcript';
+type DocType = 'log' | 'list' | 'note' | 'report' | 'transcript' | 'receipt';
+type FolderId = 'admin' | 'service' | 'system' | 'evidence';
+type Difficulty = 'normal' | 'hardcore';
 
 interface GameDocument {
   id: string;
-  folderId: string;
+  folderId: FolderId;
   title: string;
   type: DocType;
   content: React.ReactNode;
+  locked?: boolean;
   isRedacted?: boolean;
 }
 
-interface Character {
-  id: string;
-  name: string; // The "Public" name or description
-}
-
 interface Ending {
-  id: 'truth' | 'misjudge_edgar' | 'misjudge_susanna' | 'incomplete';
+  id: string;
   title: string;
   description: string;
+  color: string;
 }
 
-// --- Game Content (Sections 5-12) ---
-
-const CHARACTERS: Character[] = [
-  { id: 'victim', name: '无名死者 (The Victim)' },
-  { id: 'guest_101', name: '101住户 (Edgar)' },
-  { id: 'guest_102', name: '102住户 (Susanna)' },
-  { id: 'guest_104', name: '104住户 (Mr. X)' },
-  { id: 'dean', name: '海伦院长 (Dean Helen)' },
+// 逻辑审计日志
+const AUDIT_LOG = [
+  {
+    conclusion: "排除 101 (Edgar) 和 102 (Susanna) 为死者",
+    evidence: ["膳食单(忌糖/忌奶)", "尸检(胃内含奶油泡芙)"],
+    excludes: "101, 102"
+  },
+  {
+    conclusion: "死者为 104 的实际居住者 (冒名者)",
+    evidence: ["尸检(L码浴袍)", "洗衣房(104洗了L码)", "入住表(真Smith 23:30才到)"],
+    excludes: "真正的 Smith 先生"
+  },
+  {
+    conclusion: "作案窗口锁定为 23:45 - 00:00 (干燥期)",
+    evidence: ["尸检(纸浆拖鞋遇水即烂且完好)", "喷淋配置(全覆盖无死角)", "维修手记(23:50地面是干的)"],
+    excludes: "22:00-23:45, 00:00-01:30 的所有喷淋时段"
+  },
+  {
+    conclusion: "101 (Edgar) 的门禁卡是被盗用的 (解释门禁记录)",
+    evidence: ["电话记录(22:30报失)", "门禁日志(23:00使用, 显示离线缓存模式)", "钥匙卡台账(待同步状态)"],
+    excludes: "101 本人作案的可能性"
+  },
+  {
+    conclusion: "102 (Susanna) 不知晓维护窗口 (排除法)",
+    evidence: ["投诉单(被告知喷淋24小时运行)", "电话记录(22:35未接)", "喷淋配置(无干燥路权)"],
+    excludes: "102 利用维护窗口作案的可能性"
+  },
+  {
+    conclusion: "凶手是院长 (Dean Helen)",
+    evidence: ["维护工单(签字批准23:45停机)", "钥匙卡台账(取走万能卡)", "时间线(23:30接待后有空档)"],
+    excludes: "Arthur (有维修工作在身)"
+  }
 ];
 
+// 文档数据
 const DOCUMENTS: GameDocument[] = [
-  // FOLDER 1: 行政与人员 (Admin)
+  // --- FOLDER: ADMIN ---
   {
     id: 'guest_list',
     folderId: 'admin',
     title: '11月13日 入住登记表',
     type: 'list',
     content: (
-      <div className="space-y-2 text-sm">
+      <div className="space-y-2 text-sm font-mono">
         <div className="border-b border-gray-600 pb-2 mb-2 font-bold">听松疗养院 - 前台登记</div>
-        <p>101: 埃德加·沃恩 (Edgar Vaughn) - <span className="text-red-400 font-handwriting">VIP, 勿扰</span></p>
-        <p>102: 苏珊娜·克莱 (Susanna Clay) - <span className="text-gray-500 italic">长期住户</span></p>
-        <p>103: <span className="bg-black text-black px-1">空置维护中</span></p>
-        <p>104: 约翰·史密斯 (John Smith) - <span className="text-red-400 font-handwriting">由于暴雨，客人致电将晚点到达 (备注时间: 20:00)</span></p>
+        <p>101: Edgar Vaughn <span className="text-red-400 font-handwriting">[VIP, 糖尿病, 勿扰]</span></p>
+        <p>102: Susanna Clay <span className="text-gray-500 italic">[长期住户, 歌剧演员]</span></p>
+        <p>103: <span className="bg-black text-black px-1 select-none">RESERVED</span> (空置维护中)</p>
+        <p>104: John Smith <span className="text-red-400 font-handwriting">[迟到备注: 暴雨延误, 预计23:30到达]</span></p>
         <div className="mt-4 p-2 border border-gray-600 bg-gray-800/50">
-          <p className="font-bold">前台备注 (23:30):</p>
-          <p>真正的史密斯先生已到达。海伦院长亲自接待，安排在休息室等候。</p>
+          <p className="font-bold">值班经理备注 (23:35):</p>
+          <p>真正的 Smith 先生已到达。因 104 房需清理（前一位客人刚退？），安排其在员工休息室暂住一晚。</p>
         </div>
       </div>
     )
   },
   {
-    id: 'staff_roster',
+    id: 'phone_log',
     folderId: 'admin',
-    title: '夜班人员排班表',
-    type: 'list',
+    title: '总台电话转接记录',
+    type: 'log',
     content: (
-      <div className="text-sm">
-        <p>值班经理: 海伦·福斯特 (Dean)</p>
-        <p>维修/杂工: 阿瑟 (Arthur)</p>
-        <p>安保: (缺席/系统自动接管)</p>
-        <br/>
-        <p className="font-handwriting text-blue-300">"暴雨导致电话线路不稳定，所有外部呼叫需通过总台转接。"</p>
+      <div className="text-sm font-mono">
+        <table className="w-full text-left">
+          <thead><tr className="border-b border-gray-600"><th>时间</th><th>来源</th><th>去向</th><th>备注</th></tr></thead>
+          <tbody>
+            <tr><td>22:15</td><td>104</td><td>前台</td><td>要求送一瓶威士忌</td></tr>
+            <tr><td>22:30</td><td>101</td><td>前台</td><td><span className="text-yellow-400">报失：门禁卡遗失</span></td></tr>
+            <tr><td>22:35</td><td>前台</td><td>102</td><td>无人接听</td></tr>
+            <tr><td>23:10</td><td>外部</td><td>前台</td><td>线路故障，噪音极大...</td></tr>
+          </tbody>
+        </table>
+        <p className="mt-2 text-xs text-gray-500">*暴雨导致线路不稳定，内线系统可能出现串线。</p>
       </div>
     )
   },
 
-  // FOLDER 2: 医疗与服务 (Service)
+  // --- FOLDER: SERVICE ---
   {
     id: 'dietary',
     folderId: 'service',
-    title: '住户膳食禁忌单',
+    title: '膳食禁忌单 (厨房)',
     type: 'list',
     content: (
       <div className="text-sm space-y-2">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="border-b border-gray-500">
-              <th className="py-1">房间</th>
-              <th>过敏/禁忌</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr className="border-b border-gray-700">
-              <td className="py-1">101</td>
-              <td className="text-yellow-500">严重糖尿病 (禁糖)</td>
-            </tr>
-            <tr className="border-b border-gray-700">
-              <td className="py-1">102</td>
-              <td className="text-yellow-500">乳糖不耐受 (禁奶制品)</td>
-            </tr>
-            <tr className="border-b border-gray-700">
-              <td className="py-1">104</td>
-              <td>无记录</td>
-            </tr>
-          </tbody>
-        </table>
-        <div className="mt-4 text-xs text-gray-400">*厨房注意：今晚甜点是“特浓奶油泡芙”。101与102必须替换为果盘。</div>
+        <p>101 (Edgar): <span className="text-red-400 font-bold">I型糖尿病 (严禁糖分)</span></p>
+        <p>102 (Susanna): <span className="text-yellow-500 font-bold">重度乳糖不耐 (严禁奶制品)</span></p>
+        <p>104 (Smith): 无禁忌记录</p>
+        <div className="mt-2 border-t border-gray-600 pt-2">
+          <p className="font-bold">今日特供甜点：</p>
+          <p>特浓奶油泡芙 (含大量鲜奶油与糖霜)</p>
+          <p className="text-xs text-gray-400">注意：101/102 必须替换为无糖果盘，严禁混淆！</p>
+        </div>
       </div>
     )
   },
   {
-    id: 'room_service',
+    id: 'room_service_log',
     folderId: 'service',
-    title: '11/13 客房服务回收记录',
+    title: '客房服务回收记录',
     type: 'log',
     content: (
       <div className="text-sm font-mono">
-        <p>[20:15 回收餐盘]</p>
-        <p>101: 主菜吃光, 果盘未动。</p>
-        <p>102: 主菜剩余一半, 果盘吃光。</p>
-        <p>104: 主菜吃光, <span className="bg-yellow-900/50 text-yellow-200 px-1">奶油泡芙吃光</span>。</p>
-        <br/>
-        <p>[22:15 呼叫]</p>
-        <p>104 致电前台要求送一瓶威士忌。</p>
+        <p>[20:15 餐盘回收]</p>
+        <p>101: 主菜空, 果盘未动。</p>
+        <p>102: 主菜剩半, 果盘空。</p>
+        <p>104: 主菜空, <span className="bg-yellow-900/50 text-yellow-200 px-1 border border-yellow-700">奶油泡芙盘空</span>。</p>
       </div>
     )
   },
   {
     id: 'laundry',
     folderId: 'service',
-    title: '洗衣房清单 (本周)',
-    type: 'list',
+    title: '洗衣房收衣单',
+    type: 'receipt',
     content: (
-      <div className="text-sm">
-        <p>101: 浴袍 (XL) - 每日更换</p>
-        <p>102: 丝绸睡衣 (S) - 干洗</p>
-        <p>104: 浴袍 (L) - 今日送洗</p>
+      <div className="text-sm font-mono bg-white text-black p-3 shadow-sm rotate-1 max-w-sm">
+        <p className="text-center font-bold border-b border-black mb-2">LAUNDRY RECEIPT (洗衣单)</p>
+        <p>101: 浴袍 (XL) x1</p>
+        <p>102: 丝绸睡衣 (S) x1 [干洗]</p>
+        <p>104: 浴袍 (L) x1</p>
+        <p className="mt-4 text-xs text-right">经办人: Arthur</p>
+      </div>
+    )
+  },
+  {
+    id: 'complaint_note',
+    folderId: 'service',
+    title: '住户投诉单 (102)',
+    type: 'note',
+    content: (
+      <div className="text-sm font-serif bg-yellow-50 text-black p-4">
+        <p className="font-bold">来自: 102 (Susanna Clay)</p>
+        <p>内容：外面玻璃长廊的喷水声简直像轰炸机一样！我根本无法休息。这该死的系统到底什么时候会停？</p>
+        <hr className="border-gray-400 my-2"/>
+        <p className="font-bold">前台回复：</p>
+        <p>尊敬的 Clay 女士，非常抱歉。为了维持珍稀植物的湿度，<span className="underline">自动喷淋系统是 24 小时不间断运行的</span>。</p>
       </div>
     )
   },
 
-  // FOLDER 3: 设施与系统 (System)
+  // --- FOLDER: SYSTEM ---
   {
     id: 'sprinkler',
     folderId: 'system',
-    title: '温室/长廊 自动喷淋配置',
+    title: '玻璃长廊喷淋系统说明',
     type: 'report',
     content: (
       <div className="text-sm font-mono space-y-2">
-        <div className="border border-green-800 bg-green-900/20 p-2">
-          <p className="text-green-400">>>> SYSTEM STATUS: AUTO</p>
-          <p>区域: 玻璃长廊 (Glass Corridor)</p>
-          <p>模式: 热带雨林高湿</p>
-          <p>频率: 每15分钟启动一次，持续3分钟。</p>
-          <p>启动时间点: xx:00, xx:15, xx:30, xx:45</p>
+        <div className="border border-blue-800 bg-blue-900/20 p-2">
+          <p className="text-blue-400 font-bold">>>> 配置参数</p>
+          <p>区域: 玻璃长廊 (全长50米，无遮挡)</p>
+          <p>频率: 每15分钟启动 (xx:00, xx:15, xx:30, xx:45)</p>
+          <p>持续: 3分钟/次</p>
         </div>
-        <div className="border border-red-800 bg-red-900/20 p-2 mt-2">
-          <p className="text-red-400">!!! 维护例外 !!!</p>
-          <p>每日 23:45 - 00:00 系统进行自检，喷淋强制关闭。</p>
+        <div className="border border-red-800 bg-red-900/20 p-2">
+           <p className="text-red-400 font-bold">!!! 警告 !!!</p>
+           <p>地面铺设为吸水防滑岩。喷淋结束后，地面将在 <span className="underline">至少 10 分钟内</span> 保持严重积水状态。</p>
+           <p>严禁穿着纸质/棉质拖鞋进入，否则会瞬间湿透并损毁。</p>
+        </div>
+      </div>
+    )
+  },
+  {
+    id: 'maintenance_auth',
+    folderId: 'system',
+    title: '系统停机维护授权书',
+    type: 'report',
+    content: (
+      <div className="text-sm font-serif bg-[#f0f0f0] text-black p-4">
+        <div className="text-right text-xs font-bold text-red-600 border-2 border-red-600 inline-block p-1 rotate-12 mb-2">CONFIDENTIAL<br/>ADMIN EYES ONLY</div>
+        <h3 className="text-center font-bold text-lg underline mb-4">系统干预授权</h3>
+        <p>兹批准于 <span className="font-bold">23:45 - 00:00</span> 对全院安防及喷淋系统进行短时停机维护，以校准传感器。</p>
+        <p className="mt-4">停机期间：</p>
+        <ul className="list-disc pl-5">
+            <li>CCTV 将离线</li>
+            <li>电子门禁转为本地缓存模式</li>
+            <li><span className="font-bold">喷淋系统强制关闭 (Dry Window)</span></li>
+        </ul>
+        <div className="mt-8 flex justify-between items-end">
+            <div>
+                <p>批准人签名：</p>
+                <p className="font-handwriting text-xl text-blue-900">Dr. Helen Foster</p>
+            </div>
+            <p className="text-xs">日期: 11/13</p>
+        </div>
+      </div>
+    )
+  },
+  {
+    id: 'key_log',
+    folderId: 'system',
+    title: '🔑 钥匙卡管理台账',
+    type: 'log',
+    locked: true,
+    content: (
+      <div className="text-sm font-mono space-y-2">
+        <p className="text-green-400 border-b border-green-800 pb-1">ACCESS GRANTED: SECURITY LEVEL 2</p>
+        <table className="w-full text-left">
+           <thead><tr className="text-gray-500"><th>Time</th><th>Action</th><th>Details</th></tr></thead>
+           <tbody>
+             <tr><td>14:00</td><td>Issue</td><td>104 Guest Card (Issued)</td></tr>
+             <tr><td>22:35</td><td>Lost</td><td>101 Card (Reported via Phone) -> <span className="text-yellow-500">DEACTIVATION PENDING (SYNC ERR)</span></td></tr>
+             <tr><td>22:40</td><td>Issue</td><td>101 Temp Card (Held at Desk)</td></tr>
+             <tr><td>23:40</td><td>Take</td><td><span className="text-yellow-400 font-bold">MASTER KEY (#001) taken by H. Foster</span></td></tr>
+           </tbody>
+        </table>
+        <p className="text-xs text-red-500 mt-2">ERROR: 暴雨导致主服务器连接超时。挂失指令可能未同步至本地门禁终端。</p>
+      </div>
+    )
+  },
+  {
+    id: 'maintenance_notes',
+    folderId: 'system',
+    title: 'Arthur的维修手记',
+    type: 'note',
+    content: (
+      <div className="text-sm font-handwriting leading-relaxed text-gray-300">
+        <p>22:45 - 给104送威士忌。敲门没人。放在门口了。</p>
+        <p>23:20 - 厨房水管报修，我去处理。</p>
+        <p>23:50 - 趁着“停机维护”去长廊换灯泡。这时候喷淋停了，<span className="bg-white text-black px-1 font-bold">地是干的</span>，不用穿笨重的雨靴。真好。</p>
+        <p>01:30 - 巡逻发现温室门没关... 里面有人躺着。</p>
+      </div>
+    )
+  },
+
+  // --- FOLDER: EVIDENCE ---
+  {
+    id: 'autopsy',
+    folderId: 'evidence',
+    title: '尸检报告 #98-044',
+    type: 'report',
+    content: (
+      <div className="text-sm space-y-2">
+        <div className="bg-neutral-800 p-3 border-l-4 border-red-600">
+          <p className="font-bold text-red-400">关键物理证据：</p>
+          <p>死者穿着疗养院配发的 <span className="font-bold text-white">"环保纸浆拖鞋" (一次性)</span>。</p>
+          <p className="text-gray-400 text-xs mt-1">注：该材质极其脆弱，遇水即发生不可逆的软化与崩解。死者鞋底完好、干燥、无任何水渍。</p>
+          <p className="mt-2 text-green-400 font-mono">结论：死者从未踏入过潮湿地面。不可能通过擦干鞋底伪造。</p>
+        </div>
+        <div className="mt-4">
+           <p>胃内容物：威士忌、未消化的奶油泡芙。</p>
+           <p>死亡时间：23:30 - 00:30 之间。</p>
         </div>
       </div>
     )
   },
   {
     id: 'access_log',
-    folderId: 'system',
-    title: '门禁刷卡日志 (11/13)',
+    folderId: 'evidence',
+    title: '门禁刷卡流水 (部分)',
     type: 'log',
     content: (
       <div className="text-sm font-mono">
-        <p>21:00 - 102 (主楼入口) -> 拒绝 (宵禁)</p>
-        <p>22:00 - 101 (玻璃长廊入口) -> 允许</p>
-        <p>22:05 - 101 (玻璃长廊出口) -> 允许</p>
-        <p>23:00 - <span className="bg-yellow-900/50 text-yellow-200">101 (玻璃长廊入口) -> 允许</span></p>
-        <p>23:15 - (无出口记录)</p>
-        <p className="text-gray-500">--- 日志结束 ---</p>
+        <p className="text-red-500 border border-red-900 p-1 mb-2 text-center text-xs">NETWORK STATUS: OFFLINE (Using Local Cache)</p>
+        <p>22:00 - 101 [Entry -> Corridor]</p>
+        <p>22:05 - 101 [Exit -> Lobby]</p>
+        <p>23:00 - <span className="text-yellow-400">101 [Entry -> Corridor]</span> <span className="text-gray-500 text-xs">// 验证源: 本地缓存 (未同步挂失状态)</span></p>
+        <p>23:45 - SYSTEM SHUTDOWN (MAINTENANCE)</p>
+        <p>00:00 - SYSTEM REBOOT</p>
       </div>
     )
   },
   {
-    id: 'maintenance',
-    folderId: 'system',
-    title: '阿瑟的维修手记',
-    type: 'note',
-    content: (
-      <div className="text-sm font-handwriting leading-relaxed text-gray-300">
-        <p>22:45 - 去104送酒。敲门没人应。奇怪，明明22:15才打过电话。我把酒放在门口了。</p>
-        <p>23:20 - 厨房水管漏水，去修了一下。</p>
-        <p>23:50 - 玻璃长廊的灯闪烁。我去换灯泡。即使外面下大雨，长廊里面因为停了喷淋，地面难得是<span className="font-bold text-white border-b border-white">干的</span>。正好不用穿雨靴。</p>
-        <p>01:30 - 巡逻发现温室门虚掩... 天哪。</p>
-      </div>
-    )
-  },
-
-  // FOLDER 4: 证据与尸检 (Evidence)
-  {
-    id: 'autopsy',
+    id: 'trash_note',
     folderId: 'evidence',
-    title: '初步尸检报告 (摘录)',
-    type: 'report',
-    content: (
-      <div className="text-sm space-y-2">
-        <p><span className="font-bold">发现时间：</span>01:30</p>
-        <p><span className="font-bold">发现地点：</span>温室花坛深处</p>
-        <p><span className="font-bold">死亡推断时间：</span>23:00 - 00:30 之间</p>
-        <p><span className="font-bold">死因：</span>钝器击打后脑。</p>
-        <div className="bg-gray-800 p-2 my-2">
-          <p className="font-bold text-gray-400">衣着特征：</p>
-          <p>- 疗养院制式浴袍 (尺码 L)</p>
-          <p>- 拖鞋底面：<span className="text-red-400 font-bold">完全干燥，无水渍</span>。</p>
-        </div>
-        <div className="bg-gray-800 p-2">
-          <p className="font-bold text-gray-400">胃内容物：</p>
-          <p>- 威士忌 (少量)</p>
-          <p>- 未消化的奶油、面粉 (推测为甜点)</p>
-        </div>
-      </div>
-    )
-  },
-  {
-    id: 'cipher',
-    folderId: 'evidence',
-    title: '104房垃圾桶内的碎纸',
+    title: '104 垃圾桶碎纸片',
     type: 'note',
     content: (
       <div className="text-sm font-mono bg-white text-black p-4 rotate-1 shadow-lg max-w-[300px]">
-        <p>致 L.S.:</p>
-        <p>如果你想拿到那笔钱，就在今晚那个时间去温室。</p>
-        <p>不要走正门。</p>
+        <p>致 L.S. (Link Sterling):</p>
+        <p>计划有变。如果你想要那笔封口费，必须避开监控。</p>
+        <p>唯一的盲区在温室。</p>
         <p>记住我们的暗号：</p>
-        <p className="font-bold text-lg mt-2">ROOM 101 + ROOM 103 = ?</p>
-        <p className="text-xs mt-4 text-right">(笔迹潦草，不属于任何已知住户)</p>
+        <p className="font-bold text-lg mt-2 border-2 border-black p-1 inline-block">ROOM 101 + ROOM 103 = ?</p>
+        <p className="text-xs mt-4 text-right">(这是我在系统里的后门代码)</p>
       </div>
     )
   }
 ];
 
-// --- Logic & State ---
+// --- Components ---
 
 const App = () => {
-  const [activeFolder, setActiveFolder] = useState<string>('admin');
-  const [activeDoc, setActiveDoc] = useState<GameDocument | null>(null);
-  const [archive, setArchive] = useState<{ [key: string]: any }>({
+  const [activeFolder, setActiveFolder] = useState<FolderId>('admin');
+  const [activeDocId, setActiveDocId] = useState<string | null>(null);
+  const [unlockedDocs, setUnlockedDocs] = useState<Set<string>>(new Set());
+  const [cipherInput, setCipherInput] = useState("");
+  
+  const [difficulty, setDifficulty] = useState<Difficulty>('normal');
+  const [timeLeft, setTimeLeft] = useState(60 * 60); 
+  const [gameStatus, setGameStatus] = useState<'playing' | 'ended'>('playing');
+  
+  // 模态框状态 (null 表示无弹窗)
+  const [resultModal, setResultModal] = useState<Ending | null>(null);
+  
+  const [showLogicGrid, setShowLogicGrid] = useState(false);
+  const [showAudit, setShowAudit] = useState(false);
+
+  // Form State
+  const [archive, setArchive] = useState({
     victim_identity: '',
     victim_room: '',
     killer: '',
     murder_time: '',
     method_clue: '',
   });
-  const [showEnding, setShowEnding] = useState<Ending | null>(null);
 
-  // Helper to update archive state
+  // Logic Grid State (Key format: "Killer-Time")
+  const [grid, setGrid] = useState<Record<string, boolean>>({});
+
+  const activeDoc = useMemo(() => DOCUMENTS.find(d => d.id === activeDocId), [activeDocId]);
+  
+  // Initialize Timer based on Difficulty
+  useEffect(() => {
+    setTimeLeft(difficulty === 'normal' ? 60 * 60 : 30 * 60);
+  }, [difficulty]);
+
+  // Timer Countdown
+  useEffect(() => {
+    if (gameStatus !== 'playing') return;
+    const timer = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          triggerTimeout();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [gameStatus]);
+
+  const triggerTimeout = () => {
+    setGameStatus('ended');
+    setResultModal({
+      id: 'timeout',
+      title: '结局: 档案封存',
+      description: '时间耗尽。清晨的阳光并未带来希望，安保人员接管了档案室。你感觉到自己知道得太多，却记录得太少。你的名字将被加入下一份“待处理”清单。',
+      color: 'text-gray-500'
+    });
+  };
+
+  const handleCipherSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (cipherInput === '204') {
+      setUnlockedDocs(prev => new Set(prev).add('key_log'));
+      setCipherInput('');
+      alert("密码正确：已解锁 [钥匙卡管理台账]");
+    } else {
+      alert("密码错误");
+    }
+  };
+
   const updateArchive = (field: string, value: string) => {
     setArchive(prev => ({ ...prev, [field]: value }));
   };
 
-  // Logic to determine ending
-  const checkCase = () => {
-    // 1. Identify Victim
-    // Clues: Victim ate cream puff (No Lactose, No Diabetes) -> Not 102, Not 101.
-    // Victim wore L size -> 104 is L. 101 is XL, 102 is S.
-    // Conclusion: Victim is the person staying in 104.
-    const isVictimCorrect = archive.victim_room === '104';
+  const toggleGridCell = (key: string) => {
+    setGrid(prev => ({ ...prev, [key]: !prev[key] }));
+  };
 
-    // 2. Identify Killer
-    // Red Herring: 101 card used at 23:00. But 23:00 sprinklers are ON.
-    // Victim shoes are DRY. Must traverse during 23:45 - 00:00 (Maintenance).
-    // 101 has alibi? No, but Dean has alibi at 23:30 (Greeting Smith).
-    // Wait, let's look at the timeline.
-    // 23:00 - 101 Card used. If this was the murder, victim would be wet or killer would be wet.
-    // 23:45 - 00:00 - The only DRY window.
-    // Who was free 23:45-00:00?
-    // Dean greeted Smith at 23:30. Smith put in lounge. Dean is free after that.
-    // 101 claims to be asleep (weak).
-    // However, the "Dry Shoes" is the strongest physical evidence.
-    
-    // Determining the ending based on inputs
-    if (archive.killer === 'guest_101') {
-      setShowEnding({
-        id: 'misjudge_edgar',
-        title: '结局 B: 仓促的指控',
-        description: '你指控了 101号 埃德加。证据是他的门禁卡在 23:00 刷开了门。然而，警方后来发现埃德加因为糖尿病昏迷在房间。他的卡被盗了。更重要的是，23:00 喷淋系统正在运行，如果那时作案，死者的鞋底绝对不可能是干的。你忽略了关键的环境证据。'
-      });
-    } else if (archive.killer === 'dean' && archive.method_clue === 'maintenance_window' && isVictimCorrect) {
-      setShowEnding({
-        id: 'truth',
-        title: '结局 A: 完美的归档',
-        description: '真相大白。死者是假冒 104 住户的记者。真正的史密斯 23:30 才到。院长海伦利用 23:45-00:00 的喷淋维护窗口（这是唯一能保持鞋底干燥的时段）将记者诱骗至温室杀害。只有院长最清楚系统的运作规律。你的报告无懈可击。'
-      });
-    } else if (archive.killer === 'dean') {
-       setShowEnding({
-        id: 'truth',
-        title: '结局 A-: 证据不足的真相',
-        description: '你指控了院长，方向是对的，但你没有指出关键的作案时间窗口（喷淋维护期）。检方可能难以定罪，因为她有 23:30 接待客人的不在场证明。你需要强调 23:45 后的时间差。'
-      });
-    } else {
-      setShowEnding({
-        id: 'incomplete',
-        title: '案件驳回',
-        description: '你的档案充满了矛盾。请重新核对死者的身份特征（饮食、衣物尺码）以及鞋底干燥这一物理不可能现象。'
-      });
+  const checkCase = () => {
+    // 1. Grid Conflict Check
+    const killerMap: Record<string, string> = {
+      'guest_101': '101(Ed)',
+      'guest_102': '102(Su)',
+      'dean': 'Dean',
+      'arthur': 'Arthur'
+    };
+    const timeMap: Record<string, string> = {
+      '2200_2230': '22',
+      '2300_2315': '23',
+      '2345_0000': 'Maint'
+    };
+
+    const kKey = killerMap[archive.killer];
+    const tKey = timeMap[archive.murder_time];
+    if (kKey && tKey) {
+      const gridKey = `${kKey}-${tKey}`;
+      if (grid[gridKey]) {
+        const confirmSubmit = window.confirm(`矛盾提示：\n您的逻辑网格将【${kKey}】在【${tKey}】时段标记为“排除(X)”。\n但您在结案报告中指控了该时段的嫌疑人。\n\n是否坚持提交？`);
+        if (!confirmSubmit) return;
+      }
     }
+
+    // 2. Logic Validation
+    const isVictimRoomCorrect = archive.victim_room === '104';
+    const isVictimIdCorrect = archive.victim_identity === 'fake_smith';
+    const isKillerCorrect = archive.killer === 'dean';
+    const isTimeCorrect = archive.murder_time === '2345_0000';
+    const isMethodCorrect = archive.method_clue === 'maintenance_window';
+
+    let ending: Ending;
+    let isGameOver = false;
+
+    if (archive.killer === 'guest_101') {
+      ending = {
+        id: 'misjudge_101',
+        title: '结局 B: 错误的指控 (Edgar)',
+        description: '你指控了 101 住户。门禁记录确实显示了他的卡在 23:00 被使用。但你忽略了“本地缓存模式”的提示以及 22:30 的挂失记录。更致命的是，23:00 喷淋系统全开，他的鞋底不可能保持干燥。真正的凶手利用了你的疏忽。',
+        color: 'text-red-500'
+      };
+    } else if (archive.killer === 'guest_102') {
+      ending = {
+        id: 'misjudge_102',
+        title: '结局 C: 诱导的陷阱 (Susanna)',
+        description: '你指控了 102 住户。她确实失踪了且有动机。但根据投诉单，她被明确告知喷淋系统“24小时运行”。她根本不知道维护窗口的存在，也不可能穿着纸浆拖鞋穿越湿地。她当时只是因头痛去药房偷药罢了。',
+        color: 'text-yellow-500'
+      };
+    } else if (isKillerCorrect && (!isTimeCorrect || !isMethodCorrect || !isVictimIdCorrect)) {
+       ending = {
+        id: 'partial',
+        title: '结局 A-2: 证据链断裂',
+        description: '你正确指出了凶手是院长，但证据链存在严重漏洞。你未能解释她是如何在“满地积水”的长廊中不留痕迹地作案（利用维护窗口），或者你没能查清死者的真实身份。检方认为证据不足，院长被保释了。',
+        color: 'text-orange-400'
+      };
+    } else if (isKillerCorrect && isTimeCorrect && isMethodCorrect && isVictimIdCorrect && isVictimRoomCorrect) {
+      isGameOver = true;
+      ending = {
+        id: 'truth',
+        title: '结局 A: 完美的真相',
+        description: '无懈可击。你识破了死者是假冒的记者 Link Sterling，利用“纸浆拖鞋”这一决定性证据锁定了唯一的作案窗口——23:45至00:00的停机维护期。只有拥有最高权限并亲自签署维护令的 Helen 院长能做到这一点。钥匙卡台账成为了压死骆驼的最后一根稻草。',
+        color: 'text-green-500'
+      };
+    } else {
+      // General Failure
+      setTimeLeft(prev => Math.max(0, prev - 120)); // Penalty -2 mins
+      alert("归档驳回：逻辑存在严重矛盾。\n\n惩罚：时间扣除 2 分钟。\n\n请重新审查物理证据（鞋底）与系统日志。");
+      return;
+    }
+
+    setResultModal(ending);
+    if (isGameOver) setGameStatus('ended');
+  };
+
+  const closeModal = () => {
+    // If truth or timeout, keep closed or do nothing (game ended)
+    if (resultModal?.id === 'truth' || resultModal?.id === 'timeout') return;
+    
+    // Resume game
+    setResultModal(null);
+    setTimeLeft(prev => Math.max(0, prev - 120)); // Penalty for misjudgment
+  };
+
+  const formatTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
   return (
-    <div className="min-h-screen bg-neutral-900 text-neutral-200 flex flex-col md:flex-row overflow-hidden">
+    <div className="h-screen flex flex-col md:flex-row overflow-hidden font-mono text-sm bg-neutral-900">
       
-      {/* --- LEFT SIDEBAR: FOLDERS --- */}
-      <div className="w-full md:w-64 bg-neutral-950 border-r border-neutral-800 flex-shrink-0 flex flex-col">
+      {/* --- LEFT SIDEBAR --- */}
+      <div className="w-full md:w-64 bg-[#0a0a0a] border-r border-neutral-800 flex flex-col flex-shrink-0 z-20">
         <div className="p-4 border-b border-neutral-800 bg-black">
-          <h1 className="text-xl font-bold tracking-wider text-neutral-400">听松疗养院</h1>
-          <p className="text-xs text-neutral-600 mt-1">档案归档系统 v1.0 (1998)</p>
+          <h1 className="text-lg font-bold tracking-wider text-neutral-300 flex items-center gap-2">
+            <Terminal size={18} /> PINE_ARCHIVES
+          </h1>
+          <div className={`mt-2 text-2xl font-bold font-mono ${timeLeft < 300 ? 'text-red-500 blink' : 'text-green-500'}`}>
+            {formatTime(timeLeft)}
+          </div>
+          <p className="text-xs text-neutral-600 mt-1 uppercase">距离清晨交接</p>
+          
+          <div className="mt-4 flex gap-2">
+             <button 
+               onClick={() => setDifficulty('normal')}
+               className={`text-[10px] px-2 py-1 border ${difficulty === 'normal' ? 'bg-neutral-700 text-white border-white' : 'text-neutral-500 border-neutral-800'}`}
+             >
+               普通 (60m)
+             </button>
+             <button 
+               onClick={() => setDifficulty('hardcore')}
+               className={`text-[10px] px-2 py-1 border ${difficulty === 'hardcore' ? 'bg-red-900 text-white border-red-500' : 'text-neutral-500 border-neutral-800'}`}
+             >
+               硬核 (30m)
+             </button>
+          </div>
         </div>
         
-        <div className="flex-1 overflow-y-auto p-2 space-y-2">
-          <FolderButton id="admin" icon={<User size={16}/>} label="行政与人员" active={activeFolder} onClick={setActiveFolder} />
-          <FolderButton id="service" icon={<Clock size={16}/>} label="医疗与服务" active={activeFolder} onClick={setActiveFolder} />
-          <FolderButton id="system" icon={<Lock size={16}/>} label="设施与系统" active={activeFolder} onClick={setActiveFolder} />
-          <FolderButton id="evidence" icon={<AlertTriangle size={16}/>} label="证据与尸检" active={activeFolder} onClick={setActiveFolder} />
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          <FolderBtn id="admin" label="行政与人员" icon={<User size={14}/>} active={activeFolder} onClick={setActiveFolder} />
+          <FolderBtn id="service" label="医疗与服务" icon={<Clock size={14}/>} active={activeFolder} onClick={setActiveFolder} />
+          <FolderBtn id="system" label="设施与系统" icon={<Lock size={14}/>} active={activeFolder} onClick={setActiveFolder} />
+          <FolderBtn id="evidence" label="证据与尸检" icon={<AlertTriangle size={14}/>} active={activeFolder} onClick={setActiveFolder} />
         </div>
 
-        <div className="p-4 border-t border-neutral-800 text-xs text-neutral-600">
-          <p>当前时间: 04:15 AM</p>
-          <p>天气: 暴雨</p>
+        {/* Cipher Tool */}
+        <div className="p-4 border-t border-neutral-800 bg-neutral-900/50">
+          <label className="text-xs text-neutral-500 font-bold mb-1 block">加密文档解密</label>
+          <form onSubmit={handleCipherSubmit} className="flex gap-1">
+            <input 
+              type="text" 
+              value={cipherInput}
+              onChange={e => setCipherInput(e.target.value)}
+              placeholder="输入密钥..." 
+              className="bg-black border border-neutral-700 text-green-500 w-full px-2 py-1 text-xs outline-none focus:border-green-500"
+            />
+            <button type="submit" className="bg-neutral-800 hover:bg-neutral-700 text-neutral-300 px-2 border border-neutral-700">
+              <Unlock size={14} />
+            </button>
+          </form>
         </div>
       </div>
 
-      {/* --- CENTER: DOCUMENT READER --- */}
-      <div className="flex-1 bg-neutral-900 flex flex-col relative">
-        {/* Document List for Active Folder */}
-        <div className="h-12 bg-neutral-800 border-b border-neutral-700 flex items-center px-4 space-x-4 overflow-x-auto">
-          {DOCUMENTS.filter(d => d.folderId === activeFolder).map(doc => (
-            <button
-              key={doc.id}
-              onClick={() => setActiveDoc(doc)}
-              className={`text-sm px-3 py-1 rounded transition-colors whitespace-nowrap ${activeDoc?.id === doc.id ? 'bg-neutral-200 text-black font-bold' : 'text-neutral-400 hover:bg-neutral-700'}`}
-            >
-              {doc.type === 'log' && <span className="mr-2">LOG</span>}
-              {doc.title}
-            </button>
-          ))}
+      {/* --- CENTER: READER --- */}
+      <div className="flex-1 bg-[#111] flex flex-col relative z-10 min-w-0">
+        {/* Document Tabs */}
+        <div className="h-10 bg-[#0a0a0a] border-b border-neutral-800 flex items-center px-2 gap-2 overflow-x-auto">
+          {DOCUMENTS.filter(d => d.folderId === activeFolder).map(doc => {
+            const isLocked = doc.locked && !unlockedDocs.has(doc.id);
+            return (
+              <button
+                key={doc.id}
+                onClick={() => !isLocked && setActiveDocId(doc.id)}
+                disabled={isLocked}
+                className={`flex items-center gap-2 px-3 py-1 text-xs rounded-t transition-all border-t border-x border-transparent whitespace-nowrap
+                  ${activeDocId === doc.id ? 'bg-[#e5e5e5] text-black border-neutral-400 font-bold' : 'text-neutral-500 hover:bg-neutral-800'}
+                  ${isLocked ? 'opacity-50 cursor-not-allowed' : ''}
+                `}
+              >
+                {isLocked ? <Lock size={10} /> : <FileText size={10} />}
+                {isLocked ? 'ENCRYPTED' : doc.title}
+              </button>
+            );
+          })}
         </div>
 
-        {/* Document Content Area */}
-        <div className="flex-1 p-8 overflow-y-auto bg-[#1a1a1a] relative">
+        {/* Content */}
+        <div className="flex-1 p-4 md:p-8 overflow-y-auto bg-[#1a1a1a] relative">
           {activeDoc ? (
-            <div className="max-w-2xl mx-auto bg-[#e5e5e5] text-neutral-900 p-8 min-h-[600px] shadow-lg paper-shadow relative">
-               {/* Paper texture overlay effect */}
-               <div className="absolute inset-0 bg-yellow-500/5 pointer-events-none mix-blend-multiply"></div>
-               
-               {/* Header */}
-               <div className="flex justify-between items-end border-b-2 border-neutral-800 pb-4 mb-6 opacity-70">
-                 <div>
-                   <h2 className="text-2xl font-bold uppercase tracking-widest">{activeDoc.title}</h2>
-                   <p className="text-xs font-mono mt-1">REF: {activeDoc.id.toUpperCase()} // CLASSIFIED</p>
+            <div className="max-w-3xl mx-auto bg-[#e5e5e5] text-neutral-900 min-h-[600px] shadow-2xl paper-shadow relative animate-in fade-in duration-300">
+               {/* Watermark/Texture */}
+               <div className="absolute inset-0 bg-yellow-900/5 pointer-events-none mix-blend-multiply" />
+               <div className="absolute top-2 right-2 border-2 border-red-900/30 text-red-900/30 font-bold text-xs px-2 rotate-12 select-none">CONFIDENTIAL</div>
+
+               <div className="p-8 relative z-10">
+                 <div className="flex justify-between items-end border-b-2 border-neutral-800 pb-4 mb-6">
+                   <div>
+                     <h2 className="text-xl md:text-2xl font-bold uppercase tracking-widest font-serif">{activeDoc.title}</h2>
+                     <p className="text-xs font-mono mt-1 text-neutral-600">REF_ID: {activeDoc.id.toUpperCase()}</p>
+                   </div>
+                   <div className="text-xs font-mono text-neutral-500 text-right">
+                     PINE_SAN_ARCHIVE<br/>1998_NOV_14
+                   </div>
                  </div>
-                 <div className="text-right">
-                   <div className="border border-neutral-800 px-2 py-1 text-xs font-bold rotate-[-5deg]">PINE ARCHIVES</div>
+
+                 <div className="font-serif leading-relaxed text-sm md:text-base">
+                   {activeDoc.content}
                  </div>
                </div>
 
-               {/* Content */}
-               <div className="font-serif leading-relaxed relative z-10">
-                 {activeDoc.content}
-               </div>
-
-               {/* Footer */}
-               <div className="mt-12 pt-4 border-t border-neutral-400 text-xs text-center text-neutral-500 font-mono">
-                 PAGE 1 OF 1 • AUTHORIZED EYES ONLY
+               <div className="absolute bottom-4 w-full text-center text-[10px] font-mono text-neutral-400 uppercase">
+                 Internal Use Only • Do Not Distribute
                </div>
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center h-full text-neutral-600 space-y-4">
-              <Search size={48} className="opacity-20" />
-              <p>从左侧选择文件夹，点击上方标签查看文档。</p>
+            <div className="flex flex-col items-center justify-center h-full text-neutral-700 gap-4">
+              <Search size={64} className="opacity-20" />
+              <p>请选择档案文件进行查阅</p>
             </div>
           )}
         </div>
+        
+        {/* Logic Grid Toggle */}
+        <button 
+          onClick={() => setShowLogicGrid(!showLogicGrid)}
+          className="absolute bottom-4 right-4 bg-neutral-800 text-neutral-300 p-2 rounded-full shadow-lg hover:bg-neutral-700 z-50 border border-neutral-600"
+          title="打开逻辑辅助网格"
+        >
+          <Grid size={20} />
+        </button>
+
+        {/* Logic Grid Modal/Overlay */}
+        {showLogicGrid && (
+          <div className="absolute bottom-16 right-4 w-80 bg-neutral-900 border border-neutral-600 shadow-2xl p-4 rounded z-50 text-xs">
+            <h3 className="font-bold text-neutral-400 mb-2 border-b border-neutral-700 pb-1">调查员逻辑网格 (Investigator's Matrix)</h3>
+            <p className="text-[10px] text-gray-500 mb-2">点击方格标记“排除(X)”。此笔记仅供自查，不计入报告。</p>
+            <div className="grid grid-cols-4 gap-1 mb-1 text-center font-bold text-neutral-500">
+              <div></div><div>22:00</div><div>23:00</div><div>Maint</div>
+            </div>
+            {['101(Ed)', '102(Su)', 'Dean', 'Arthur'].map(p => (
+              <div key={p} className="grid grid-cols-4 gap-1 items-center mb-1">
+                <div className="font-bold text-neutral-400">{p}</div>
+                {['22', '23', 'Maint'].map(t => {
+                  const k = `${p}-${t}`;
+                  return (
+                    <div 
+                      key={k} 
+                      onClick={() => toggleGridCell(k)}
+                      className={`h-6 border border-neutral-700 cursor-pointer flex items-center justify-center ${grid[k] ? 'bg-red-900/50 text-red-200' : 'bg-black'}`}
+                    >
+                      {grid[k] && <XCircle size={12}/>}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* --- RIGHT SIDEBAR: ARCHIVE FORM --- */}
-      <div className="w-full md:w-80 bg-neutral-950 border-l border-neutral-800 flex flex-col flex-shrink-0">
+      {/* --- RIGHT SIDEBAR: FORM --- */}
+      <div className="w-full md:w-80 bg-[#0a0a0a] border-l border-neutral-800 flex flex-col flex-shrink-0 z-20 overflow-y-auto">
         <div className="p-4 bg-neutral-900 border-b border-neutral-800">
           <h2 className="font-bold flex items-center gap-2 text-neutral-200">
-            <FileText size={18} /> 案件归档表
+            <FileText size={16} /> 最终结案报告
           </h2>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-6">
-          
-          {/* Section 1: Victim Identity */}
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-neutral-500 uppercase">1. 死者身份确认</label>
-            <div className="bg-neutral-900 p-3 rounded border border-neutral-800 space-y-3">
-              <p className="text-xs text-gray-400 mb-2">根据尸检报告中的衣物尺码与胃内容物反推。</p>
-              
-              <select 
-                className="w-full bg-black border border-neutral-700 text-sm p-2 rounded text-neutral-300"
-                value={archive.victim_room}
-                onChange={(e) => updateArchive('victim_room', e.target.value)}
-              >
-                <option value="">-- 选择死者所在房间 --</option>
-                <option value="101">101房 (XL码, 忌糖)</option>
-                <option value="102">102房 (S码, 忌奶)</option>
-                <option value="104">104房 (L码, 无记录)</option>
-              </select>
+        <div className="p-4 space-y-6 pb-20">
+          <Section label="1. 死者身份确认">
+             <Select 
+               value={archive.victim_room} 
+               onChange={v => updateArchive('victim_room', v)}
+               options={[
+                 {val: '', lbl: '- 选择房间号 -'},
+                 {val: '101', lbl: '101房 (XL码)'},
+                 {val: '102', lbl: '102房 (S码)'},
+                 {val: '104', lbl: '104房 (L码)'},
+               ]} 
+             />
+             <Select 
+               value={archive.victim_identity} 
+               onChange={v => updateArchive('victim_identity', v)}
+               options={[
+                 {val: '', lbl: '- 选择真实身份 -'},
+                 {val: 'edgar', lbl: 'Edgar Vaughn (客人)'},
+                 {val: 'susanna', lbl: 'Susanna Clay (客人)'},
+                 {val: 'real_smith', lbl: 'John Smith (迟到者)'},
+                 {val: 'fake_smith', lbl: '冒名顶替者 / 记者'},
+               ]} 
+             />
+          </Section>
 
-              <select 
-                className="w-full bg-black border border-neutral-700 text-sm p-2 rounded text-neutral-300"
-                value={archive.victim_identity}
-                onChange={(e) => updateArchive('victim_identity', e.target.value)}
-              >
-                 <option value="">-- 选择死者真实身份 --</option>
-                 <option value="edgar">埃德加 (议员)</option>
-                 <option value="susanna">苏珊娜 (歌女)</option>
-                 <option value="fake_smith">假冒的史密斯 (记者)</option>
-                 <option value="real_smith">真正的史密斯 (迟到)</option>
-              </select>
-            </div>
-          </div>
+          <Section label="2. 手法与时间窗口">
+             <p className="text-[10px] text-gray-500 mb-2">凶手如何在喷淋开启的玻璃长廊作案且不留水渍？</p>
+             <Select 
+               value={archive.method_clue} 
+               onChange={v => updateArchive('method_clue', v)}
+               options={[
+                 {val: '', lbl: '- 核心环境证据 -'},
+                 {val: 'umbrella', lbl: '使用了雨伞/雨衣'},
+                 {val: 'carried', lbl: '通过污衣井运送尸体'},
+                 {val: 'maintenance_window', lbl: '利用系统停机维护窗口'},
+               ]} 
+             />
+             <Select 
+               value={archive.murder_time} 
+               onChange={v => updateArchive('murder_time', v)}
+               options={[
+                 {val: '', lbl: '- 作案时间段 -'},
+                 {val: '2200_2230', lbl: '22:00 - 22:30 (晚餐时段)'},
+                 {val: '2300_2315', lbl: '23:00 - 23:15 (喷淋运行中)'},
+                 {val: '2345_0000', lbl: '23:45 - 00:00 (系统离线)'},
+                 {val: '0015_0030', lbl: '00:15 - 00:30 (喷淋运行中)'},
+               ]} 
+             />
+          </Section>
 
-          {/* Section 2: The Method */}
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-neutral-500 uppercase">2. 关键作案窗口</label>
-            <div className="bg-neutral-900 p-3 rounded border border-neutral-800 space-y-3">
-              <p className="text-xs text-gray-400 mb-2">死者鞋底是干的，而玻璃长廊每15分钟喷水一次。凶手是如何做到的？</p>
-              <select 
-                className="w-full bg-black border border-neutral-700 text-sm p-2 rounded text-neutral-300"
-                value={archive.method_clue}
-                onChange={(e) => updateArchive('method_clue', e.target.value)}
-              >
-                <option value="">-- 选择核心环境证据 --</option>
-                <option value="umbrella">死者打了伞</option>
-                <option value="carried">尸体被通过污衣井运送</option>
-                <option value="maintenance_window">利用 23:45 的系统维护停机间隙</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Section 3: The Killer */}
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-neutral-500 uppercase">3. 指控凶手</label>
-            <div className="bg-neutral-900 p-3 rounded border border-neutral-800 space-y-3">
-              <select 
-                className="w-full bg-black border border-neutral-700 text-sm p-2 rounded text-neutral-300"
-                value={archive.killer}
-                onChange={(e) => updateArchive('killer', e.target.value)}
-              >
-                <option value="">-- 选择嫌疑人 --</option>
-                <option value="guest_101">101 埃德加 (门禁卡记录)</option>
-                <option value="guest_102">102 苏珊娜 (不在场证明存疑)</option>
-                <option value="dean">海伦院长 (熟悉系统)</option>
-                <option value="arthur">维修工阿瑟 (最后目击者)</option>
-              </select>
-            </div>
-          </div>
+          <Section label="3. 指控真凶">
+            <Select 
+               value={archive.killer} 
+               onChange={v => updateArchive('killer', v)}
+               options={[
+                 {val: '', lbl: '- 嫌疑人 -'},
+                 {val: 'guest_101', lbl: '101 Edgar (门禁记录)'},
+                 {val: 'guest_102', lbl: '102 Susanna (不在场证明存疑)'},
+                 {val: 'dean', lbl: 'Dean Helen (院长)'},
+                 {val: 'arthur', lbl: 'Arthur (维修工)'},
+               ]} 
+             />
+          </Section>
 
           <button 
             onClick={checkCase}
-            className="w-full bg-neutral-200 text-black font-bold py-3 mt-4 hover:bg-white transition-colors uppercase tracking-widest border border-gray-400"
+            className="w-full bg-neutral-200 hover:bg-white text-black font-bold py-3 uppercase tracking-widest border border-gray-400 transition-colors text-xs"
           >
             提交结案报告
           </button>
 
-          {/* Decryption Puzzle Mini-Tool */}
-          <div className="mt-8 pt-6 border-t border-neutral-800">
-             <h3 className="text-xs font-bold text-neutral-500 mb-2 flex items-center gap-1"><HelpCircle size={12}/> 辅助工具：密码计算</h3>
-             <div className="bg-black p-2 text-xs font-mono text-green-500">
-               <p>> INPUT: 101 + 103</p>
-               <p>> HINT: 房间号相加</p>
-               <p>> RESULT: 204 (Target Room?)</p>
-               <p className="text-gray-500 mt-1">// 提示：这可能暗示凶手在寻找某个特定编号的物品或位置，或者是为了掩人耳目。</p>
-             </div>
+          {/* Developer Audit Log Toggle */}
+          <div className="border-t border-neutral-800 pt-4">
+             <button 
+               onClick={() => setShowAudit(!showAudit)} 
+               className="flex items-center gap-2 text-xs text-neutral-600 hover:text-neutral-400 w-full"
+             >
+               {showAudit ? <ChevronDown size={12}/> : <ChevronRight size={12}/>} 
+               逻辑审计日志 (Debug)
+             </button>
+             
+             {showAudit && (
+               <div className="mt-2 space-y-2 bg-black p-2 border border-neutral-800 text-[10px] font-mono text-gray-400">
+                 {AUDIT_LOG.map((log, i) => (
+                   <div key={i} className="mb-2 border-b border-neutral-900 pb-2">
+                     <p className="text-green-600 font-bold">结论: {log.conclusion}</p>
+                     <p className="text-blue-600">证据: {log.evidence.join(' + ')}</p>
+                     <p className="text-red-900">排除: {log.excludes}</p>
+                   </div>
+                 ))}
+               </div>
+             )}
           </div>
 
         </div>
       </div>
 
       {/* --- ENDING MODAL --- */}
-      {showEnding && (
-        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
-          <div className="bg-neutral-900 border border-neutral-700 max-w-lg w-full p-8 shadow-2xl relative">
-            <button 
-              onClick={() => setShowEnding(null)}
-              className="absolute top-4 right-4 text-neutral-500 hover:text-white"
-            >
-              ✕
-            </button>
-            <h2 className={`text-3xl font-bold mb-4 ${showEnding.id === 'truth' ? 'text-green-500' : 'text-red-500'}`}>
-              {showEnding.title}
+      {resultModal && (
+        <div className="fixed inset-0 bg-black/95 z-[60] flex items-center justify-center p-4 animate-in fade-in duration-500">
+          <div className="bg-[#111] border border-neutral-700 max-w-lg w-full p-8 shadow-2xl relative">
+            <h2 className={`text-2xl font-bold mb-4 font-serif ${resultModal.color}`}>
+              {resultModal.title}
             </h2>
             <div className="w-full h-px bg-neutral-700 mb-6"></div>
-            <p className="text-lg leading-relaxed mb-8 font-serif">
-              {showEnding.description}
+            <p className="text-base leading-relaxed mb-8 text-neutral-300 font-serif">
+              {resultModal.description}
             </p>
-            <div className="flex justify-end">
-              <button 
-                onClick={() => setShowEnding(null)}
-                className="px-6 py-2 border border-neutral-600 hover:bg-neutral-800 text-sm uppercase tracking-widest"
-              >
-                返回档案
-              </button>
+            <div className="flex justify-end gap-4">
+              {resultModal.id !== 'truth' && resultModal.id !== 'timeout' ? (
+                <button 
+                  onClick={closeModal}
+                  className="px-4 py-2 border border-neutral-600 hover:bg-neutral-800 text-neutral-400 text-xs uppercase"
+                >
+                  继续调查 (扣除2分钟)
+                </button>
+              ) : (
+               <button 
+                  onClick={() => window.location.reload()}
+                  className="px-4 py-2 bg-neutral-200 text-black hover:bg-white text-xs uppercase font-bold"
+                >
+                  重启档案系统
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -509,17 +771,37 @@ const App = () => {
   );
 };
 
-// Subcomponent for Folder Buttons
-const FolderButton = ({ id, icon, label, active, onClick }: { id: string, icon: React.ReactNode, label: string, active: string, onClick: (id: string) => void }) => (
+// --- Subcomponents ---
+
+const FolderBtn = ({ id, label, icon, active, onClick }: any) => (
   <button
     onClick={() => onClick(id)}
-    className={`w-full flex items-center space-x-3 px-3 py-3 text-sm transition-colors rounded ${
-      active === id ? 'bg-neutral-800 text-neutral-200' : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-900'
+    className={`w-full flex items-center space-x-3 px-3 py-2 text-xs transition-colors rounded-sm ${
+      active === id ? 'bg-neutral-800 text-neutral-200 border-l-2 border-green-500' : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-900'
     }`}
   >
     {icon}
-    <span>{label}</span>
+    <span className="font-mono">{label}</span>
   </button>
+);
+
+const Section = ({ label, children }: any) => (
+  <div className="space-y-2">
+    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">{label}</label>
+    <div className="bg-neutral-900 p-2 rounded border border-neutral-800 space-y-2">
+      {children}
+    </div>
+  </div>
+);
+
+const Select = ({ value, onChange, options }: any) => (
+  <select 
+    className="w-full bg-black border border-neutral-700 text-xs p-2 rounded text-neutral-300 outline-none focus:border-green-700 transition-colors"
+    value={value}
+    onChange={(e) => onChange(e.target.value)}
+  >
+    {options.map((o: any) => <option key={o.val} value={o.val}>{o.lbl}</option>)}
+  </select>
 );
 
 const root = createRoot(document.getElementById('root')!);

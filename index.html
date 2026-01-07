@@ -1,17 +1,18 @@
 
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>The Pine Sanitarium Archives</title>
+    <title>听松疗养院归档事宜</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=Special+Elite&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=Special+Elite&family=Noto+Serif+SC:wght@400;700&display=swap" rel="stylesheet">
     <style>
       body {
-        font-family: 'Courier Prime', monospace;
-        background-color: #1a1a1a;
+        font-family: 'Courier Prime', 'Noto Serif SC', monospace;
+        background-color: #0f0f0f;
         color: #e5e5e5;
+        overflow-x: hidden;
       }
       .font-handwriting {
         font-family: 'Special Elite', cursive;
@@ -19,31 +20,39 @@
       .paper-shadow {
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
       }
-      /* Custom Scrollbar for that retro terminal/paper feel */
+      /* Custom Scrollbar */
       ::-webkit-scrollbar {
         width: 8px;
+        height: 8px;
       }
       ::-webkit-scrollbar-track {
-        background: #2d2d2d; 
+        background: #1a1a1a; 
       }
       ::-webkit-scrollbar-thumb {
-        background: #555; 
+        background: #444; 
       }
       ::-webkit-scrollbar-thumb:hover {
-        background: #777; 
+        background: #666; 
+      }
+      .blink {
+        animation: blinker 1s linear infinite;
+      }
+      @keyframes blinker {
+        50% { opacity: 0; }
       }
     </style>
-  <script type="importmap">
+    <script type="importmap">
 {
   "imports": {
     "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
+    "react-dom/client": "https://esm.sh/react-dom@^19.2.3/client",
+    "react": "https://esm.sh/react@^19.2.3",
     "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "react": "https://esm.sh/react@^19.2.3"
+    "react/": "https://esm.sh/react@^19.2.3/"
   }
 }
 </script>
-</head>
+  </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
